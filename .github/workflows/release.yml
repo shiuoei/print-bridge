@@ -1,0 +1,71 @@
+name: Release
+
+# 发布流程全部在 GitHub 上完成，本地不需要安装 gh：
+#   1. 本地提交并推送 main（版本号、docs/RELEASES.md 的 `## <version>` 小节）；
+#   2. git tag v<version> && git push origin v<version>
+#   3. 本工作流在 GitHub 的 runner 上交叉构建 Windows 版，用仓库 Secret 里的
+#      私钥签名更新，创建草稿 release、上传全部资产，成功后发布为 latest。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v7
+        with:
+          # 完整历史与 tag：Go 的 VCS 版本戳和 mygo 读取已发布 release 都更稳。
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # `mygo build -upload` 上传到 mygo.json 中 version 对应的 tag；两者不一致
+      # 会把产物挂到错误的 release，所以先检查。
+      - name: Check that the tag matches mygo.json
+        run: |
+          version="$(python3 -c 'import json; print(json.load(open("mygo.json"))["version"])')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match mygo.json version $version (expected v$version)"
+            exit 1
+          fi
+          echo "Releasing PrintBridge $version"
+
+      # 在 Linux 上交叉构建 windows/amd64 需要 makensis 生成安装包。
+      - name: Install NSIS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis
+
+      - name: Build, sign and upload the release assets
+        env:
+          CGO_ENABLED: "0"
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go run github.com/egoist/mygo/cmd/mygo build -upload -platform windows/amd64
+
+      # 上传成功后才发布：构建或上传失败时 release 停在草稿状态，客户端看不到。
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Verify the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,tagName,assets \
+            --jq '{draft: .isDraft, tag: .tagName, assets: [.assets[].name]}'

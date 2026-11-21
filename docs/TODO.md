@@ -30,10 +30,10 @@
 
 | 项 | 现状 | 阻塞原因 |
 | --- | --- | --- |
-| 更新器 | **已接入**（2026-11-21，0.2.0 起）：`mygo.json` 的 `updates` + 原生更新窗口 + 托盘/关于页入口，签名密钥已生成在仓库外 | 仍需：创建 GitHub 仓库；把私钥存入 CI secret；`mygo build -upload` 发布 `v0.2.0` 草稿 release 并发布（见 DEVELOPMENT「发布与自动更新」） |
+| 更新器 | **已接入**（2026-11-21，0.2.0 起）：`mygo.json` 的 `updates` + 原生更新窗口 + 托盘/关于页入口；签名密钥已生成在仓库外；发布由 `.github/workflows/release.yml` 在推 tag 时自动完成 | 仍需：在仓库添加 Secret `MYGO_UPDATER_PRIVATE_KEY`；推送 `v0.2.0` 完成首次发布并观察 Actions 结果 |
 | 代码签名 / 公证 | 无；安装包未签名，SmartScreen 会告警 | 需要**代码签名证书**；macOS 需开发者账号 |
-| CI 门禁 | **无 `.github/` 目录** | 可直接写，无外部依赖 |
-| GitHub 仓库与远端 | 本地仓库**无 remote**；`github.com/shiuoei/print-bridge` 尚未创建（匿名 404） | 在 GitHub 建仓并 push；决定是否保留 Gitee 镜像或归档旧地址 |
+| CI 门禁 | 已有 `/.github/workflows/release.yml`（tag 触发的发布流水线）；**测试门禁未建** | 可加 `go vet` / 相关包 `go test` 的 PR 工作流；`cmd/print-bridge` 的 IPC 测试需先修隔离缺陷 |
+| GitHub 仓库与远端 | 仓库已创建并公开（`shiuoei/print-bridge`），origin 为 SSH，`main` 已推送 | 剩余：决定是否保留 Gitee 镜像或归档旧地址 |
 | Linux deb/rpm | `packaging/` 只有 1 个 `.service` 文件 | 可直接写；验收需 Linux 环境 |
 | 依赖预检（`serve` 启动前） | 未实现；缺 `lp/lpstat/lpoptions/soffice/chrome` 时只在任务到达才报错 | 可直接写 |
 | systemd unit 补全 | 现有 unit 已含 `Type=notify`、`StateDirectory`、`ProtectSystem=strict`、`ProtectHome=true`、`ReadWritePaths`。**缺**：`RuntimeDirectory`、`PrivateTmp`、`RestrictAddressFamilies`、`SystemCallFilter` 等加固项 | 可直接写；实际行为需 Linux + systemd 验证 |
@@ -59,7 +59,7 @@
 | 浏览器真实业务页面 | HTTPS 业务站点 | Origin 白名单、复杂页面版面、HTML 子资源 |
 | 公示页面打印 | 公网访问 | 复杂公网页面版面正确性 |
 | 安装包覆盖升级 | Windows 桌面 | 已完成一次验证；签名后需重验。2026-11-21 起 exe 与安装器内含应用图标资源，重装后还需核对资源管理器、开始菜单与「应用和功能」显示的图标 |
-| 自动更新端到端 | 已发布的 GitHub release（需仓库与签名私钥）、安装好的旧版本 | 发布 `v0.2.0` 后，用 0.2.0 客户端实机完成 `0.2.0 → 0.2.1`：后台/手动检查、增量下载、验签、重启生效；同时核对私钥丢失/损坏时的失败提示 |
+| 自动更新端到端 | 已发布的 GitHub release（推 tag 触发 Actions 即可）、安装好的旧版本 | 首次发布 `v0.2.0` 后，用 0.2.0 客户端实机完成 `0.2.0 → 0.2.1`：后台/手动检查、增量下载、验签、重启生效；同时核对私钥丢失/损坏时的失败提示。客户端网络需能访问 `github.com` |
 | macOS 桌面 | macOS 设备 | MyGo 原生窗口、签名、公证 |
 
 ---

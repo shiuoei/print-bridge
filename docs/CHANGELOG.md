@@ -4,6 +4,22 @@
 
 ## 2026-11-21
 
+### GitHub Actions 自动发布（不用本地装 gh）
+
+新增 `.github/workflows/release.yml`：推送 `v<version>` tag 即触发发布，全程在 GitHub 上完成，本地只需 git push（不需要安装 GitHub CLI 或登录）。
+
+- 触发与校验：`push tags: ["v*"]`；第一步校验 tag 与 `mygo.json` 的 `version` 一致，不一致直接失败，避免产物挂到错误的 release。
+- 构建：`ubuntu-latest` + `actions/setup-go@v7`（`go-version-file: go.mod`），`apt-get install nsis` 后在 Linux 上交叉构建 `windows/amd64`；`CGO_ENABLED=0`。
+- 签名与上传：`MYGO_UPDATER_PRIVATE_KEY` 来自仓库 Secret，`go run github.com/egoist/mygo/cmd/mygo build -upload -platform windows/amd64` 创建草稿 release 并上传归档、清单、`install.ps1`、`SHA256SUMS`、安装包（`GITHUB_TOKEN` 由工作流 `permissions: contents: write` 授权，runner 自带 `gh`）。
+- 发布：上传成功后自动 `gh release edit <tag> --draft=false` 转为 latest；构建/上传失败时 release 停在草稿，客户端检查不到。最后一步回显资产清单便于核对。
+- 文档：`docs/DEVELOPMENT.md` 的"发布与自动更新"改为 tag 触发流程并补充一次性 Secret 配置；`README.md` 同步说明。
+
+验证（Windows 11 / Go 1.27.4）：
+
+- 工作流 YAML 经 PyYAML 解析通过，结构与 MyGo 官方 `docs/github-actions.md` 的 native-UI 模板一致（去掉 Bun 前端步骤）。
+- `gh`/`actions/checkout`/`actions/setup-go` 版本经 `api.github.com` 核对为当前最新（checkout v7、setup-go v7）。
+- **未在 GitHub 上实际运行**：需要先在仓库添加 Secret `MYGO_UPDATER_PRIVATE_KEY`，再推送 `v0.2.0` tag 触发。首次运行结果、runner 上 `mygo build -upload` 与 NSIS 安装包生成、release 自动发布均**待验证**。
+
 ### 检查更新与签名自动更新（版本 0.2.0）
 
 接入 MyGo 的签名自动更新，更新源为 GitHub Releases（`shiuoei/print-bridge`）。自动更新从 **0.2.0** 起步：0.1.0 没有检查逻辑，只能手动装一次 0.2.0。

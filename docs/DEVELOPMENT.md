@@ -206,19 +206,31 @@ go run github.com/egoist/mygo/cmd/mygo keygen   # 默认写到 %AppData%\mygo\up
 - 公钥填进 `mygo.json` 的 `updates.publicKey`（可提交）。
 - 私钥 `mygo-update.key` **必须放在仓库外**（密码管理器 + CI secret）。构建发布包时通过 `MYGO_UPDATER_PRIVATE_KEY` 传入。私钥丢失后，已安装版本将无法再自动更新，只能手动重装；私钥泄露等于任何人都能向用户下发代码。
 
-**发布一次新版本**：
+**发布一次新版本**（全在 GitHub 上完成，本地不需要安装 `gh`）：
 
-1. 提升 `mygo.json` 的 `version`（语义化版本，例如 `0.2.1`），并同步安装包内的版本资源。
-2. 在 `docs/RELEASES.md` 增加 `## <version>` 小节——它是更新窗口里的发布说明，缺这一节 `mygo build`（带私钥时）会直接报错；历史证据仍写 `docs/CHANGELOG.md`。
-3. 带私钥构建并上传：
+1. 提升 `mygo.json` 的 `version`（语义化版本，例如 `0.2.1`），在 `docs/RELEASES.md` 增加 `## <version>` 小节（更新窗口里的发布说明；缺这一节带私钥构建会直接报错；历史证据仍写 `docs/CHANGELOG.md`），提交并推送 `main`。
+2. 打 tag 并推送，触发 [`.github/workflows/release.yml`](../.github/workflows/release.yml)：
+
+```powershell
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+3. 工作流在 GitHub 的 `ubuntu-latest` runner 上：校验 tag 与 `mygo.json` 的 `version` 一致 → 安装 NSIS → `mygo build -upload -platform windows/amd64`（用仓库 Secret `MYGO_UPDATER_PRIVATE_KEY` 里的私钥签名）→ 创建草稿 release 并上传归档、清单、`install.ps1`、`SHA256SUMS`、安装包 → 上传成功后自动 `gh release edit --draft=false` 发布为 latest。构建失败时 release 停在草稿，客户端看不到。
+4. 到 Actions 页面确认本次 run 通过；也可以在 Releases 页面看资产清单。
+
+首次使用前需要在 GitHub 仓库做一次性配置：**Settings → Secrets and variables → Actions → New repository secret**，名称 `MYGO_UPDATER_PRIVATE_KEY`，值为仓库外 `%AppData%\mygo\update-keys\mygo-update.key` 的完整内容（一行 base64）。只有这一个 Secret；`GITHUB_TOKEN` 由工作流自动提供（工作流已声明 `permissions: contents: write`）。若 Actions 因权限报 403，在 Settings → Actions → General → Workflow permissions 选择 "Read and write permissions"。
+
+本地构建仍可用于校验产物（需要私钥环境变量）：
 
 ```powershell
 $env:MYGO_UPDATER_PRIVATE_KEY = (Get-Content "$env:APPDATA\mygo\update-keys\mygo-update.key" -Raw)
-go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64   # 本地校验产物
-go run github.com/egoist/mygo/cmd/mygo build -upload -platform windows/amd64
+go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64
 ```
 
-`-upload` 需要已配置 `updates.github`、本机 `gh` 已登录，且目标仓库存在；它把归档、清单、`install.ps1`、`SHA256SUMS` 与安装包上传为 `v<version>` 的**草稿 release**。确认产物后发布该 release（`gh release edit v0.2.1 --draft=false`），它成为 latest，客户端检查的就是它。没有 `-upload` 时产物在 `build/windows-amd64/`。
+产物在 `build/windows-amd64/`。注意本机网络访问 `github.com` 时通时断，本地构建取不到旧 release 时不会生成增量（会提示 "no version is published yet"），GitHub runner 上没有这个问题。
+
+失败处理：若工作流在**发布前**失败，可删掉远端 tag 修好后再打（`git push origin :refs/tags/v0.2.1`）；**已发布**的版本不要改 tag 或替换资产（客户端清单 URL 与签名绑定在该 tag 上），发新版本覆盖。想保留人工把关，可把工作流最后的 "Publish the release" 步骤去掉，改为在 Releases 页面手动 Publish。
 
 **边界与限制**：
 
@@ -247,7 +259,7 @@ go run github.com/egoist/mygo/cmd/mygo build -upload -platform windows/amd64
 | `PRINTBRIDGE_REAL_INLINE` | 真实打印机验证 inline base64 PDF |
 | `PRINTBRIDGE_MATRIX_*_URL` | 扩展格式矩阵测试的素材 URL |
 | `PRINTBRIDGE_VERSION` | 覆盖桌面/CLI 构建的版本号（`go build` 没有 `mygo build` 的版本戳时使用） |
-| `MYGO_UPDATER_PRIVATE_KEY` | 发布构建用的更新签名私钥内容；只在发布时设置，不写入仓库 |
+| `MYGO_UPDATER_PRIVATE_KEY` | 更新签名私钥内容：本地发布构建时临时设置，正式发布由 GitHub Actions Secret 提供，不写入仓库 |
 
 ### 跨平台
 
