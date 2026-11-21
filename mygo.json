@@ -1,0 +1,10 @@
+{
+  "name": "PrintBridge",
+  "slug": "print-bridge",
+  "identifier": "dev.shiuoei.print-bridge",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "main": "./cmd/desktop",
+  "out": "build",
+  "webview": false
+}

@@ -1,0 +1,36 @@
+# Build output and local caches.
+/build/
+/dist/
+/.cache/
+
+# Go build/analysis artifacts.
+*.test
+*.prof
+coverage.out
+*.out.tmp
+
+# Executables produced by `go build` in the repository root. Only the root is
+# matched on purpose: resources/**/*.exe are distributed assets that must stay
+# in version control (SumatraPDF, see THIRD_PARTY_NOTICES.md).
+/*.exe
+
+# Local SQLite state and WAL sidecar files.
+*.db
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Logs and shell redirection artifacts.
+*.log
+nohup.out
+
+# Editor and OS noise.
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local environment overrides. .env.example is meant to be committed.
+.env
+.env.local

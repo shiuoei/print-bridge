@@ -1,0 +1,21 @@
+[Unit]
+Description=PrintBridge headless print agent
+After=network-online.target cups.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=print-bridge
+Group=print-bridge
+StateDirectory=print-bridge
+Environment=PRINTBRIDGE_DATA_DIR=/var/lib/print-bridge
+ExecStart=/usr/bin/print-bridge-server serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/print-bridge
+
+[Install]
+WantedBy=multi-user.target
