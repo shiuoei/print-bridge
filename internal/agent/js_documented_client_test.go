@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"github.com/shiuoei/print-bridge/internal/domain"
+	"github.com/shiuoei/print-bridge/internal/printer"
 	"github.com/shiuoei/print-bridge/internal/store"
 )
 
-// The raw-WebSocket client in docs/JS-INTEGRATION.md is what a business site is
+// The raw-WebSocket client in docs/DEVELOPMENT.md §7 is what a business site is
 // told to copy. A document that drifts from the agent is worse than no document,
 // so the client is executed here against a real Agent: every wire field it sends
 // and every field it reads is checked against the production handler.
@@ -41,7 +42,11 @@ func TestDocumentedJSClient(t *testing.T) {
 	if err := s.SetConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	a := New(s, &fakePrinter{printed: make(chan []byte, 4)})
+	recorder := &recordingPrinter{
+		fakePrinter: &fakePrinter{printed: make(chan []byte, 4)},
+		options:     make(chan printer.PrintOptions, 8),
+	}
+	a := New(s, recorder)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go a.worker(ctx)
@@ -68,6 +73,39 @@ func TestDocumentedJSClient(t *testing.T) {
 		t.Fatalf("documented JS client failed: %v\n%s", err, out)
 	}
 	t.Logf("%s", strings.TrimSpace(string(out)))
+
+	// The script submits four PDF jobs: one inside a batch with all three fitting
+	// fields, one without them (centred by default), one with all three, one with
+	// center:false. They reach a backend that can honour the options, so the whole
+	// wire-to-printer path is checked.
+	want := []printer.PrintOptions{
+		{ScaleMode: "fit_width", Direction: "portrait", Center: true}, // doc-batch-pdf
+		{Center: true}, // doc-pdf, defaults
+		{ScaleMode: "actual", Direction: "landscape", Center: true}, // doc-fitting
+		{Center: false}, // doc-no-center
+	}
+	for i, expected := range want {
+		select {
+		case got := <-recorder.options:
+			if got != expected {
+				t.Fatalf("PDF job %d reached the backend with %+v, want %+v", i+1, got, expected)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("PDF job %d never reached the backend (%d of %d seen)", i+1, i, len(want))
+		}
+	}
+}
+
+// recordingPrinter records the page-fitting options the agent passes to a backend
+// that implements printer.OptionedPdfPrinter.
+type recordingPrinter struct {
+	*fakePrinter
+	options chan printer.PrintOptions
+}
+
+func (p *recordingPrinter) PrintPDFWithOptions(_ context.Context, _ string, _ string, _ int, _ *domain.Paper, opts printer.PrintOptions) (printer.Submission, error) {
+	p.options <- opts
+	return printer.Submission{Backend: "fake"}, nil
 }
 
 // nodeBinary finds Node without assuming a specific install location.
@@ -80,9 +118,9 @@ func nodeBinary(t *testing.T) string {
 	return ""
 }
 
-// documentedClientScript is the client from docs/JS-INTEGRATION.md section 8,
-// with the assertions the document promises. Keep them in step: if a field name
-// or status literal changes in the agent, this fails.
+// documentedClientScript is the client from docs/DEVELOPMENT.md §7 (业务方对接
+// 参考实现), with the assertions the document promises. Keep them in step: if a
+// field name or status literal changes in the agent, this fails.
 const documentedClientScript = `
 import assert from 'node:assert/strict';
 
@@ -172,7 +210,8 @@ class PrintBridge {
   async query(jobId)     { return this._request({ type: 'query', job_id: jobId }); }
 
   async print(job) {
-    const { jobId, type, printerName, fileUrl, dataBase64, html, waitMs, copies, paper } = job;
+    const { jobId, type, printerName, fileUrl, dataBase64, html, waitMs, copies, paper,
+            scaleMode, direction, center } = job;
     const payload = { type: 'print', job_id: jobId, format: type };
     if (printerName !== undefined) payload.printer_name = printerName;
     if (fileUrl !== undefined) payload.file_url = fileUrl;
@@ -181,6 +220,10 @@ class PrintBridge {
     if (waitMs !== undefined) payload.wait_ms = waitMs;
     if (copies !== undefined) payload.copies = copies;
     if (paper !== undefined) payload.paper = { width_mm: paper.widthMm, height_mm: paper.heightMm };
+    // 页面适配：center 省略即居中（默认 true，Windows 下用 shrink 实现），传 false 才关闭。
+    if (scaleMode !== undefined) payload.scale_mode = scaleMode;
+    if (direction !== undefined) payload.direction = direction;
+    if (center !== undefined) payload.center = center;
     return this._request(payload);
   }
 
@@ -196,6 +239,9 @@ class PrintBridge {
         if (j.html !== undefined) item.html = j.html;
         if (j.copies !== undefined) item.copies = j.copies;
         if (j.paper !== undefined) item.paper = { width_mm: j.paper.widthMm, height_mm: j.paper.heightMm };
+        if (j.scaleMode !== undefined) item.scale_mode = j.scaleMode;
+        if (j.direction !== undefined) item.direction = j.direction;
+        if (j.center !== undefined) item.center = j.center;
         return item;
       }),
     });
@@ -246,6 +292,10 @@ if (typeof globalThis.WebSocket === 'undefined') {
 const pb = new PrintBridge({ port });
 await pb.connect();
 
+// A minimal PDF the production conversion path accepts, used by the jobs below.
+const pdf = '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n';
+const pdfUrl = 'data:application/pdf;base64,' + Buffer.from(pdf).toString('base64');
+
 // 4.1 ping: the literal agent_status is part of the contract.
 const pong = await pb.ping();
 assert.equal(pong.type, 'pong');
@@ -280,9 +330,10 @@ await assert.rejects(
   e => e.code === 'JOB_DUPLICATED',
 );
 
-// 4.3 batch: jobs carry format, not type.
+// 4.3 batch: jobs carry format, not type, and forward their page-fitting options.
 const batch = await pb.printBatch('doc-batch', [
   { jobId: 'doc-two', type: 'raw', dataBase64: Buffer.from('TWO').toString('base64') },
+  { jobId: 'doc-batch-pdf', type: 'pdf', fileUrl: pdfUrl, scaleMode: 'fit_width', direction: 'portrait', center: true },
 ]);
 assert.equal(batch.status, 'queued');
 assert.equal(batch.job_id, 'doc-batch');
@@ -298,8 +349,19 @@ await assert.rejects(pb.print({ jobId: 'doc-bad', type: 'exe' }), e => e.code ==
 assert.ok(Array.isArray(await pb.queue()));
 
 // 6/8 PDF through the production conversion path (fake backend only spools).
-const pdf = '%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF\n';
-await pb.print({ jobId: 'doc-pdf', type: 'pdf', fileUrl: 'data:application/pdf;base64,' + Buffer.from(pdf).toString('base64') });
+await pb.print({ jobId: 'doc-pdf', type: 'pdf', fileUrl: pdfUrl });
+
+// 4.3 page fitting: the client forwards scale_mode/direction/center, and the
+// agent applies them (the Go side asserts they reached the backend).
+const fitted = await pb.print({
+  jobId: 'doc-fitting', type: 'pdf', fileUrl: pdfUrl,
+  scaleMode: 'actual', direction: 'landscape', center: true,
+});
+assert.equal(fitted.status, 'queued', 'a job with page-fitting options is accepted');
+const notCentred = await pb.print({
+  jobId: 'doc-no-center', type: 'pdf', fileUrl: pdfUrl, center: false,
+});
+assert.equal(notCentred.status, 'queued', 'center:false is accepted');
 await pb.print({ jobId: 'doc-bad-pdf', type: 'pdf', fileUrl: 'data:application/pdf;base64,' + Buffer.from('not a PDF').toString('base64') });
 
 // 6. waitTerminal resolves on the real terminal states.
@@ -313,5 +375,5 @@ assert.equal(q.type, 'job_status');
 assert.equal(q.job_id, 'doc-one');
 
 pb.close();
-console.log(JSON.stringify({ ping: pong.agent_status, printer: printers[0].name, one: one.status, batch: batch.status, terminal: terminal.status }));
+console.log(JSON.stringify({ ping: pong.agent_status, printer: printers[0].name, one: one.status, batch: batch.status, fitting: fitted.status, notCentred: notCentred.status, terminal: terminal.status }));
 `

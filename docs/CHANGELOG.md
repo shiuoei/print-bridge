@@ -4,6 +4,53 @@
 
 ## 2026-11-21
 
+### 版本定为 0.2.1（0.2.0 发布闭环已验证）
+
+`mygo.json` 的 `version` 由 `0.2.0` 提升到 `0.2.1`，把 0.2.0 之后的两项修复纳入下一版发布说明。
+
+- 0.2.0 发布闭环已验证：推送 `v0.2.0` tag 后 GitHub Actions 的 `Release` 工作流运行成功（`status=completed`、`conclusion=success`），release 已发布（非草稿），资产含 `print-bridge-setup-0.2.0-amd64.exe`、`print-bridge-0.2.0-windows-amd64.tar.gz`、`update-windows-amd64.json`、`install.ps1`、`SHA256SUMS`（经 `api.github.com` 核对）。
+- 版本与发布说明：`docs/RELEASES.md` 增加 `## 0.2.1` 小节（缺这一节时带私钥构建会直接报错）；内容为居中打印修复与参考客户端透传页面适配字段。
+- 本版包含的改动：`internal/printer` 的居中映射修复（`actual`+`center` → `shrink`，1:1 上限、页面居中；`center:false` → `noscale` 左上角 1:1）、`docs/DEVELOPMENT.md` 第 7 节参考客户端透传 `scale_mode`/`direction`/`center`、以及对应的端到端测试。
+
+验证（Windows 11 / Go 1.27.4）：
+
+- `go test -count=1 ./internal/printer ./internal/agent ./internal/domain ./internal/command`、`go vet ./...`、`gofmt`、`go build ./...`、Linux/macOS 交叉编译均通过。
+- 带私钥 `mygo build -platform windows/amd64` 成功，产出 0.2.1 的 `PrintBridge.exe`（版本资源 0.2.1）、`print-bridge-setup-0.2.1-amd64.exe`、`print-bridge-0.2.1-windows-amd64.tar.gz`、`print-bridge-0.2.0-to-0.2.1-windows-amd64.delta`（124 KB，替代 19.6 MB 整包）与 `update-windows-amd64.json`；清单 `version` 为 `0.2.1`、发布说明取自 `## 0.2.1`、带 Ed25519 签名，`SHA256SUMS` 校验通过。本次本地构建成功读取已发布的 `v0.2.0` 并生成增量，说明发布源链路可用。
+
+待办：提交并推送 `main`，再 `git tag v0.2.1 && git push origin v0.2.1` 触发 Actions 发布；发布后用 0.2.0 客户端实机验证 `0.2.0 → 0.2.1` 自动更新（检查、增量下载、验签、重启）。
+
+### 修复居中打印不生效（`center` 之前是无效令牌）
+
+现象：业务方按文档传 `"center": true`（搭配 `scale_mode: "actual"`）打印 100×150 标签，内容仍落在左上角。
+
+根因：打包的 SumatraPDF 3.6.1 的 `-print-settings` **没有 `center` 令牌**。核对 3.6.1rel 源码 `src/Print.cpp` 的 `ApplyPrintSettings`：只认 `noscale`/`shrink`/`fit`、`portrait`/`landscape`、`<n>x`、`simplex/duplex*`、`color/monochrome`、`bin=`/`paper=`/`paperkind=`/`output=`——未知令牌被**静默忽略**（没有错误分支）。更关键的是 `noscale` 的落点是物理纸张左上角（源码注释写明是刻意如此，便于表单/标签对位），所以"actual + center"从未产生居中效果。仓库此前的注释和文档误以为 SumatraPDF 支持 `center`/`stretch`。
+
+修复（[internal/printer/printer_windows.go](internal/printer/printer_windows.go)、[printer.go](internal/printer/printer.go)）：
+
+- 去掉无效的 `center` 令牌；改为用它选择缩放令牌：`scale_mode: "actual"` 且 `center` 为真（默认）→ `shrink`（按需缩小到打印区域内、页面居中、**绝不放大**）；`center: false` → `noscale`（1:1、物理纸张左上角）。其余 `fill`/`fit_width`/`fit_height`/未指定仍为 `fit`（SumatraPDF 本身就会居中）。
+- 注释与文档改为与 SumatraPDF 实际能力一致；`scale_token_test.go` 覆盖新映射，并断言只发出 SumatraPDF 真正认识的令牌（`noscale`/`shrink`/`fit`）。
+
+影响：`center` 之前是空操作，现在会实际改变 `actual` 任务的落点。默认 `center: true` 的任务由"左上角 1:1"变为"按需缩小、居中"——页面尺寸等于纸张时差异只来自打印区域边距；需要严格 1:1 且左上角对齐时传 `"center": false`。
+
+验证（Windows 11 / Go 1.27.4）：`go test -count=1 ./internal/printer ./internal/agent` 通过（含新增 `TestActualSizeCentringSelectsShrink`、令牌白名单测试），`go vet`、`gofmt` 通过。**待验证**：真实 HPRT N41 上 `actual+center` 的出纸位置（本次只核对源码与单元测试，未出纸）。
+
+局限：`center` 只能实现**页面级**居中。SumatraPDF 不会移动 PDF 页面内部的内容——PDF 页面尺寸与纸张不一致、或内容在页面里本身偏置时，需要业务方生成正确版面的 PDF（页面=标签尺寸、内容居中），或改发 `image`（图片路径按纸张 contain + 居中）。内容级居中（按纸张尺寸重建 PDF 页面并平移内容）需要引入 PDF 处理能力，尚未实现。
+
+### 业务对接参考客户端透传页面适配字段（居中/缩放/方向）
+
+服务端一直支持居中：`print`/`print_batch` 的任务字段 `center`（JSON 布尔，省略即居中、默认 `true`）经 `domain.Job.PaperOptions` 传给 Windows 打印后端，在 SumatraPDF 的 `-print-settings` 里追加 `center` 令牌。缺的是**文档里的参考客户端**：`docs/DEVELOPMENT.md` §7 的 `print()`/`printBatch()` 原先没有转发 `scale_mode`/`direction`/`center`，业务方照抄客户端就传不了居中。
+
+- [docs/DEVELOPMENT.md](DEVELOPMENT.md) §7：`print()`/`printBatch()` 增加 `scale_mode`/`direction`/`center` 透传（`center` 省略即居中），并注明该参考实现由测试逐字执行。
+- [internal/agent/js_documented_client_test.go](internal/agent/js_documented_client_test.go)：文档客户端的逐字副本同步修改；新增记录后端（实现 `printer.OptionedPdfPrinter`）与 4 个 PDF 任务——批量内 1 个、单独 3 个，断言到达后端的 `printer.PrintOptions` 依次为 `{fit_width,portrait,center:true}`、`{center:true 默认}`、`{actual,landscape,center:true}`、`{center:false}`，覆盖 JS 客户端 → WebSocket → Agent → 打印后端整条链路；脚本同时断言带这些字段的任务返回 `queued`。
+- 文档 §4.3 已补充 `center` 的类型、默认值与生效范围（仅 PDF 渲染链路；`raw` 与 Linux/CUPS 不处理）。
+
+验证（Windows 11 / Go 1.27.4 / Node 24.22）：
+
+- `go test -count=1 -run TestDocumentedJSClient -v ./internal/agent` 通过，脚本输出 `{"fitting":"queued","notCentred":"queued",...}`，选项断言全部命中。
+- `go test -count=1 -timeout 300s ./internal/agent` 全包通过；`go vet`、`gofmt` 通过。
+
+服务端代码无改动：业务站点自行拼 JSON 时直接发 `"center": true`（或省略）即可，不需要升级 Agent。
+
 ### GitHub Actions 自动发布（不用本地装 gh）
 
 新增 `.github/workflows/release.yml`：推送 `v<version>` tag 即触发发布，全程在 GitHub 上完成，本地只需 git push（不需要安装 GitHub CLI 或登录）。

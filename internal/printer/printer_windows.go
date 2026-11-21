@@ -134,12 +134,20 @@ func (p platformBackend) PrintPDF(ctx context.Context, path, name string, copies
 // PrintPDFWithOptions submits a PDF, applying the page-fitting choices the job
 // was accepted with.
 //
-// SumatraPDF's -print-settings accepts exactly four scaling tokens (noscale,
-// shrink, fit, stretch) plus `center` and the two orientations; it has no
-// fit_width/fit_height. Some business front-ends express their choice in those
-// terms, so each one is mapped onto the closest token instead of being rejected:
-// a wrong-but-close scale still prints a usable label, whereas refusing the job
-// stops the shipment.
+// SumatraPDF 3.6.1's -print-settings understands three scaling tokens
+// (noscale, shrink, fit) and the two orientations — no stretch, no
+// fit_width/fit_height, and no centring setting at all. Some business front-ends
+// express their choice in other terms, so each one is mapped onto the closest
+// token instead of being rejected: a wrong-but-close scale still prints a usable
+// label, whereas refusing the job stops the shipment.
+//
+// Centring is a property of the scale token, not a setting: noscale puts the page
+// at the physical paper's top-left (SumatraPDF does that on purpose so forms and
+// labels of varying size line up), while shrink and fit centre the page on the
+// paper and keep the content inside the printable area. PrintOptions.Center
+// therefore picks between shrink (centred, never enlarged) and noscale (1:1,
+// top-left) for an actual-size job; for the other modes the token is fit and
+// SumatraPDF centres regardless.
 func (p platformBackend) PrintPDFWithOptions(ctx context.Context, path, name string, copies int, paper *domain.Paper, opts PrintOptions) (Submission, error) {
 	tool, err := commandPath("SumatraPDF.exe")
 	if err != nil {
@@ -154,15 +162,15 @@ func (p platformBackend) PrintPDFWithOptions(ctx context.Context, path, name str
 	} else {
 		args = append(args, "-print-to", name)
 	}
-	// SumatraPDF's -print-settings takes a comma-separated list. Every part is
-	// emitted, matching the protocol contract:
+	// SumatraPDF's -print-settings takes a comma-separated list:
 	//   - "<n>x"       copies (always sent, even for 1)
-	//   - scaling      one of the four tokens below; defaults to "fit"
+	//   - scaling      one of noscale/shrink/fit, which also decides centring
 	//   - orientation  derived from the requested paper, so a landscape request
 	//                  on a portrait form is not rotated onto two pages
-	//   - "center"     only when asked for; it matters with noscale on smaller pages
 	//   - "paper=<driver name>" the paper resolved above
-	settings := []string{strconv.Itoa(copies) + "x", sumatraScaleToken(opts.ScaleMode)}
+	// A token SumatraPDF does not know is silently ignored (ApplyPrintSettings has
+	// no error branch), so nothing here may rely on an unknown token working.
+	settings := []string{strconv.Itoa(copies) + "x", sumatraScaleToken(opts.ScaleMode, opts.Center)}
 	if paper != nil {
 		settings = append(settings, paperOrientationFor(paper, opts.Direction))
 		paperName, err := p.driverPaperName(ctx, printTo, paper)
@@ -170,9 +178,6 @@ func (p platformBackend) PrintPDFWithOptions(ctx context.Context, path, name str
 			return Submission{}, err
 		}
 		settings = append(settings, "paper="+paperName)
-	}
-	if opts.Center {
-		settings = append(settings, "center")
 	}
 	args = append(args, "-print-settings", strings.Join(settings, ","))
 	args = append(args, path)
@@ -188,8 +193,8 @@ func (p platformBackend) PrintPDFWithOptions(ctx context.Context, path, name str
 	return Submission{Backend: backendWindowsSumatra, Tracking: false}, nil
 }
 
-// sumatraScaleToken maps a job's scale_mode onto one of the four scaling tokens
-// -print-settings understands.
+// sumatraScaleToken maps a job's scale_mode and centring choice onto one of the
+// three scaling tokens -print-settings understands.
 //
 // The business settings panel offers only 实际大小 and 按纸张比例, which arrive as
 // "actual" and "fill"; a previous implementation printed both of them as "fit".
@@ -201,12 +206,20 @@ func (p platformBackend) PrintPDFWithOptions(ctx context.Context, path, name str
 //
 // fit_width and fit_height have no single-axis equivalent in SumatraPDF; they
 // also degrade to "fit" (complete containment, never cropped).
-func sumatraScaleToken(mode string) string {
+//
+// An actual-size job has no centring option in SumatraPDF: noscale is top-left by
+// design. Asking for centring maps it to shrink instead — the same fit calculation
+// capped at 1:1, so it never enlarges, always centres, and keeps every printable
+// pixel inside the paper's printable area.
+func sumatraScaleToken(mode string, center bool) string {
 	if mode == domain.ScaleActual {
+		if center {
+			return "shrink"
+		}
 		return "noscale"
 	}
 	// "fill", "fit_width", "fit_height", empty and anything unrecognised all
-	// print as a complete page scaled into the paper.
+	// print as a complete page scaled into the paper (and centred, as fit does).
 	return "fit"
 }
 

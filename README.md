@@ -1,6 +1,6 @@
 # PrintBridge
 
-本地静默打印代理。浏览器业务系统通过 WebSocket 把 PDF、图片、Office 文档、HTML 或原始打印指令交给它，由它提交到本机打印机，无需弹出打印对话框。
+本地静默打印代理。浏览器业务系统通过 WebSocket 把 PDF、图片、Office 文档、HTML 或原始打印指令交给它，由它提交到本机打印机，无需弹出打印对话框。Vibe Coding 产物
 
 桌面端使用 Go + [MyGo](https://github.com/egoist/mygo) 原生控件（无 WebView），另有 Linux headless 服务与 CLI。
 
@@ -13,6 +13,7 @@
 - 参照的是行为契约：WebSocket 消息格式、任务状态语义、错误码集合；
 - 代码为独立的 Go 实现，**不包含原项目的任何源代码**，也不是其衍生作品；
 - 安装标识、数据目录、配置、历史与发布包完全独立，不读取也不迁移原版数据。
+- 本想改rust适配自己,但是编译太费劲了就放弃了
 
 本项目以 [Apache License 2.0](LICENSE) 发布。随包分发的第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 

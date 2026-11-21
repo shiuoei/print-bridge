@@ -8,47 +8,72 @@ import (
 	"github.com/shiuoei/print-bridge/internal/domain"
 )
 
-// SumatraPDF's -print-settings knows exactly four scaling tokens. The
-// business front-end expresses its choice in actual/fill terms, and the Node
-// agent it replaces printed both as "fit". fill must NOT become "stretch":
-// stretch scales width and height independently, which distorts a shipping
-// label — the one outcome that must never happen.
+// SumatraPDF 3.6.1's -print-settings knows three scaling tokens (noscale,
+// shrink, fit) and has no centring token at all. The business front-end expresses
+// its choice in actual/fill terms, and the Node agent it replaces printed both as
+// "fit". fill must NOT become "stretch": SumatraPDF does not even accept stretch,
+// and per-axis scaling distorts a shipping label — the one outcome that must
+// never happen.
 func TestSumatraScaleTokenMapping(t *testing.T) {
-	cases := map[string]string{
-		domain.ScaleActual:    "noscale",
-		domain.ScaleFill:      "fit", // 按纸张比例 = keep aspect ratio, not stretch
-		domain.ScaleFitWidth:  "fit",
-		domain.ScaleFitHeight: "fit",
-		"":                    "fit",
-		"bogus":               "fit",
+	cases := []struct {
+		mode   string
+		center bool
+		want   string
+	}{
+		{domain.ScaleActual, false, "noscale"},
+		{domain.ScaleActual, true, "shrink"}, // centred, never enlarged
+		{domain.ScaleFill, false, "fit"},     // 按纸张比例 = keep aspect ratio, not stretch
+		{domain.ScaleFill, true, "fit"},
+		{domain.ScaleFitWidth, false, "fit"},
+		{domain.ScaleFitHeight, true, "fit"},
+		{"", false, "fit"},
+		{"", true, "fit"},
+		{"bogus", false, "fit"},
+		{"bogus", true, "fit"},
 	}
-	for mode, want := range cases {
-		if got := sumatraScaleToken(mode); got != want {
-			t.Errorf("sumatraScaleToken(%q) = %q, want %q", mode, got, want)
+	for _, c := range cases {
+		if got := sumatraScaleToken(c.mode, c.center); got != c.want {
+			t.Errorf("sumatraScaleToken(%q, %t) = %q, want %q", c.mode, c.center, got, c.want)
 		}
 	}
 }
 
 // Stretch must never be emitted for a label job: it is the one token that
-// distorts by scaling the two axes independently. This test exists to stop a
-// future "cleanup" from reintroducing the mapping.
+// distorts by scaling the two axes independently (and SumatraPDF does not accept
+// it). This test exists to stop a future "cleanup" from reintroducing the mapping.
 func TestLabelScalingNeverStretches(t *testing.T) {
-	for _, mode := range []string{"", domain.ScaleActual, domain.ScaleFill, domain.ScaleFitWidth, domain.ScaleFitHeight} {
-		if got := sumatraScaleToken(mode); got == "stretch" {
-			t.Errorf("sumatraScaleToken(%q) = stretch; a label must never be scaled per-axis", mode)
+	for _, center := range []bool{false, true} {
+		for _, mode := range []string{"", domain.ScaleActual, domain.ScaleFill, domain.ScaleFitWidth, domain.ScaleFitHeight} {
+			if got := sumatraScaleToken(mode, center); got == "stretch" {
+				t.Errorf("sumatraScaleToken(%q, %t) = stretch; a label must never be scaled per-axis", mode, center)
+			}
 		}
 	}
 }
 
-// Only the four documented tokens may ever reach the command line: an unknown
-// token makes SumatraPDF abort the print ("ParseFlags"), so a typo here would
-// take every label down with it.
-func TestSumatraScaleTokenIsAlwaysOneOfFour(t *testing.T) {
-	allowed := map[string]bool{"noscale": true, "shrink": true, "fit": true, "stretch": true}
-	for _, mode := range []string{"", domain.ScaleActual, domain.ScaleFill, domain.ScaleFitWidth, domain.ScaleFitHeight, "bogus", "FIT"} {
-		if got := sumatraScaleToken(mode); !allowed[got] {
-			t.Errorf("sumatraScaleToken(%q) = %q, which is not a -print-settings scaling token", mode, got)
+// Only tokens SumatraPDF actually parses may reach the command line. Unknown
+// tokens are silently ignored (ApplyPrintSettings has no error branch), so a typo
+// would print with the wrong layout instead of failing loudly — worth a guard.
+func TestSumatraScaleTokenIsAlwaysSupported(t *testing.T) {
+	allowed := map[string]bool{"noscale": true, "shrink": true, "fit": true}
+	for _, center := range []bool{false, true} {
+		for _, mode := range []string{"", domain.ScaleActual, domain.ScaleFill, domain.ScaleFitWidth, domain.ScaleFitHeight, "bogus", "FIT"} {
+			if got := sumatraScaleToken(mode, center); !allowed[got] {
+				t.Errorf("sumatraScaleToken(%q, %t) = %q, which is not a -print-settings scaling token", mode, center, got)
+			}
 		}
+	}
+}
+
+// Centring an actual-size job must reach SumatraPDF as shrink: noscale is
+// top-left by design, so "center" would otherwise be a no-op (it is not a
+// -print-settings token).
+func TestActualSizeCentringSelectsShrink(t *testing.T) {
+	if got := sumatraScaleToken(domain.ScaleActual, true); got != "shrink" {
+		t.Fatalf("actual+center = %q, want shrink", got)
+	}
+	if got := sumatraScaleToken(domain.ScaleActual, false); got != "noscale" {
+		t.Fatalf("actual+no-center = %q, want noscale", got)
 	}
 }
 

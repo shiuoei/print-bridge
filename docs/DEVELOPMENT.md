@@ -96,6 +96,15 @@
 
 `file_url` 与 `data_base64` **二选一**：`pdf`/`image` 同时给出会被拒绝（不能替调用方猜）。`raw` 不接受 `paper`；`copies` 接受但忽略（部分业务系统无条件携带）。
 
+`scale_mode`/`direction`/`center` 只影响 PDF 渲染链路（`pdf`、`image`、Office、HTML 都会先转 PDF）；`raw` 原样提交，这些字段不起作用。`center` 是 **JSON 布尔值**，省略即居中（默认 `true`）。注意 Windows 后端（SumatraPDF）**没有独立的居中设置**，居中只能靠缩放令牌表达：
+
+| `scale_mode` | `center: true`（默认） | `center: false` |
+| --- | --- | --- |
+| `actual` | `shrink`：按需缩小到纸张内并居中，绝不放大 | `noscale`：1:1 打印，从物理纸张左上角开始 |
+| `fill` / `fit_width` / `fit_height` / 未指定 | `fit`：整页缩放装入纸张并居中 | 仍是 `fit`，SumatraPDF 无法关闭居中 |
+
+居中/缩放只移动"页面"，不会移动 PDF 页面内部的内容：页面尺寸等于纸张时，`actual` 两种取值的落点差异仅来自打印区域边距；如果 PDF 内容本身在页面里偏左上，任何 `-print-settings` 参数都无法把它挪到中间。需要内容级居中时，应由业务方生成页面尺寸等于标签、内容居中的 PDF（或改发 `image`，图片路径会按纸张 contain + 居中）。Linux/CUPS 后端目前忽略这三个字段。
+
 ### 4.4 状态
 
 `queued`、`downloading`、`printing`、`submitted`、`completed`、`failed`、`unknown`、`cancelled`。
@@ -121,9 +130,9 @@
 | `raw` 的 `copies` | 无条件带 `copies:1` | 会报错 |
 | 缩放 | `scale_mode`/`direction`/`center` | 无 |
 
-`scale_mode` 映射到 SumatraPDF 的 `-print-settings`（只有四种缩放令牌）：`actual` → `noscale`；`fill` → `fit`；`fit_width`/`fit_height` → `fit`；未指定 → `fit`。
+`scale_mode` 映射到 SumatraPDF 的 `-print-settings`（只有三种缩放令牌）：`actual` → `center` 为真时 `shrink`、为假时 `noscale`；`fill` → `fit`；`fit_width`/`fit_height` → `fit`；未指定 → `fit`。
 
-> `fill` **不能**映射为 `stretch`——stretch 按宽高独立缩放会把面单拉变形。`fit_width`/`fit_height` 也不是单方向拟合，SumatraPDF 做不到，实际退化为"完整缩放到纸张内"。`direction` 覆盖按纸张比例推断的方向（`landscape` 是内容旋转 90°，纸张方向不变）；`center` 默认 `true`。
+> `fill` **不能**映射为 `stretch`——SumatraPDF 3.6.1 根本不接受 `stretch`（未知令牌被静默忽略），而且按宽高独立缩放会把面单拉变形。`fit_width`/`fit_height` 也不是单方向拟合，SumatraPDF 做不到，实际退化为"完整缩放到纸张内"。`direction` 覆盖按纸张比例推断的方向（`landscape` 是内容旋转 90°，纸张方向不变）。`center` 默认 `true`，但它不是 SumatraPDF 的参数，而是决定 `actual` 用 `shrink`（居中、不放大）还是 `noscale`（左上角 1:1）；其余模式本身就居中。
 
 ## 5. 打印、转换与安全
 
@@ -137,7 +146,7 @@
 
 ### 5.1 打印参数要点
 
-Windows PDF 走 SumatraPDF 的 `-print-to` + `-print-settings`。该工具**没有** `-silent` 参数（`-print-to` 本身即静默），传入会以 `ParseFlags` 中止。缩放令牌只支持 `noscale`、`shrink`、`fit`、`stretch` 与 `center`、`portrait`/`landscape`；`fitwidth`/`fitheight` 是查看器的 `-zoom` 参数，不是打印参数。
+Windows PDF 走 SumatraPDF 的 `-print-to` + `-print-settings`。该工具**没有** `-silent` 参数（`-print-to` 本身即静默），传入会以 `ParseFlags` 中止。3.6.1 的缩放令牌只有 `noscale`、`shrink`、`fit`，**没有** `stretch`，也**没有** `center`；未知令牌会被静默忽略（源码 `ApplyPrintSettings` 没有错误分支），所以把"居中"当成令牌传给它是无效的。`fitwidth`/`fitheight` 是查看器的 `-zoom` 参数，不是打印参数。三者对落点的作用：`noscale` 从物理纸张左上角 1:1 打印（SumatraPDF 有意如此，便于表单/标签对位）；`shrink`/`fit` 把页面缩放到打印区域并居中，且 `shrink` 不会放大。
 
 ### 5.2 纸张必须匹配驱动声明
 
@@ -270,7 +279,7 @@ GOOS=darwin  GOARCH=arm64 go build ./...
 
 ## 7. 业务方对接参考实现
 
-约 200 行的原生 WebSocket 客户端，无任何依赖。`internal/agent/js_documented_client_test.go` 会**真实执行这段代码**对 Agent 做断言，文档与实现分叉时测试失败。
+约 200 行的原生 WebSocket 客户端，无任何依赖。`internal/agent/js_documented_client_test.go` 会**真实执行这段代码**对 Agent 做断言，文档与实现分叉时测试失败。`print`/`printBatch` 会透传页面适配字段 `scale_mode`/`direction`/`center`（见 4.3；`center` 省略即居中）。
 
 ```js
 class PrintBridge {
@@ -359,7 +368,8 @@ class PrintBridge {
   async query(jobId)     { return this._request({ type: 'query', job_id: jobId }); }
 
   async print(job) {
-    const { jobId, type, printerName, fileUrl, dataBase64, html, waitMs, copies, paper } = job;
+    const { jobId, type, printerName, fileUrl, dataBase64, html, waitMs, copies, paper,
+            scaleMode, direction, center } = job;
     const payload = { type: 'print', job_id: jobId, format: type };
     if (printerName !== undefined) payload.printer_name = printerName;
     if (fileUrl !== undefined) payload.file_url = fileUrl;
@@ -368,6 +378,10 @@ class PrintBridge {
     if (waitMs !== undefined) payload.wait_ms = waitMs;
     if (copies !== undefined) payload.copies = copies;
     if (paper !== undefined) payload.paper = { width_mm: paper.widthMm, height_mm: paper.heightMm };
+    // 页面适配：center 省略即居中（默认 true，Windows 下用 shrink 实现），传 false 才关闭。
+    if (scaleMode !== undefined) payload.scale_mode = scaleMode;
+    if (direction !== undefined) payload.direction = direction;
+    if (center !== undefined) payload.center = center;
     return this._request(payload);
   }
 
@@ -383,6 +397,9 @@ class PrintBridge {
         if (j.html !== undefined) item.html = j.html;
         if (j.copies !== undefined) item.copies = j.copies;
         if (j.paper !== undefined) item.paper = { width_mm: j.paper.widthMm, height_mm: j.paper.heightMm };
+        if (j.scaleMode !== undefined) item.scale_mode = j.scaleMode;
+        if (j.direction !== undefined) item.direction = j.direction;
+        if (j.center !== undefined) item.center = j.center;
         return item;
       }),
     });

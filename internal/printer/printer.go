@@ -77,7 +77,11 @@ type PrintOptions struct {
 	ScaleMode string
 	// Direction is "portrait", "landscape", "auto" or empty.
 	Direction string
-	// Center asks for the page to be centred when it is smaller than the paper.
+	// Center asks for the page to be centred on the paper when it is smaller
+	// than it. The Windows backend can only express centring through the scale
+	// token: SumatraPDF has no centring setting, but its fit/shrink modes centre
+	// the page and its noscale mode deliberately starts at the paper's top-left.
+	// Center therefore decides which of those two an actual-size job gets.
 	Center bool
 }
 
