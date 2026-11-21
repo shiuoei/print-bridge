@@ -62,7 +62,11 @@ func DefaultConfig() Config {
 	c.Limits.MaxBatchJobs = 20
 	c.Limits.MaxCopies = 100
 	c.Limits.DownloadTimeoutSeconds = 30
-	c.App.Language = "en"
+	// The desktop app ships for a Chinese-speaking operator, so Chinese is the
+	// default; en is the other supported choice. A config file that never
+	// carried app.language (written before the field existed) inherits this,
+	// while an explicit choice keeps the language the operator picked.
+	c.App.Language = "zh-CN"
 	c.Remote.PollIntervalSeconds = 10
 	c.Remote.MaxReportRetries = 10
 	c.Remote.HistoryRetentionDays = 3

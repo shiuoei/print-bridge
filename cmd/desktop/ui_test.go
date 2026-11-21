@@ -64,11 +64,11 @@ func newTestDesktop(t *testing.T) *desktop {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	d := &desktop{
-		store:    s,
-		service:  command.Service{Store: s, Printer: desktopTestBackend{}},
-		language: "en",
-		tab:      tabOverview,
+		store:   s,
+		service: command.Service{Store: s, Printer: desktopTestBackend{}},
+		tab:     tabOverview,
 	}
+	// load copies the store's config, default language included, into d.
 	d.load()
 	return d
 }

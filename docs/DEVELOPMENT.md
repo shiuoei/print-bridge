@@ -45,7 +45,7 @@
 ### 当前配置与数据
 
 - 默认端口 `17890`；默认白名单 IP 包含 `127.0.0.1`、`::1`，Origin 为空。
-- `app.language` 接受 `en` 与 `zh-CN`，默认 `en`。桌面"设置"页切换后通过 `command.Service` 立即保存。中英文 JSON 语言包位于 `cmd/desktop/locales/`，编译时嵌入程序。诊断项按稳定 ID 和级别显示本地化说明，未知底层错误保留原文作为技术详情。
+- `app.language` 接受 `en` 与 `zh-CN`，**默认 `zh-CN`**（简体中文）。桌面"设置"页切换后通过 `command.Service` 立即保存。配置里已显式保存的语言选择不会被默认值覆盖；只有缺少该键的旧配置才会继承新默认值。中英文 JSON 语言包位于 `cmd/desktop/locales/`，编译时嵌入程序。诊断项按稳定 ID 和级别显示本地化说明，未知底层错误保留原文作为技术详情。
 - 首次启动且缺少默认打印机、纸张或 Origin 时，桌面显示原生配置引导；通过 `command.Service` 保存打印机、纸张、Origin、端口与 `app.setup_completed`。可跳过，也可从设置页再次打开。已有完整配置不会强制重走引导。
 - 默认文件上限 20 MiB、单批 20 个任务、最多 100 份、下载超时 30 秒。
 - 独立数据目录默认 `os.UserConfigDir()/print-bridge`；环境变量 `PRINTBRIDGE_DATA_DIR` 可覆盖。headless systemd unit 指定 `/var/lib/print-bridge`。

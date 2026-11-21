@@ -4,6 +4,22 @@
 
 ## 2026-11-21
 
+### 默认界面语言改为简体中文
+
+`app.language` 的默认值由 `en` 改为 `zh-CN`：全新安装，或数据目录里还没有 `config.json` 时，桌面从配置引导开始就是中文界面。
+
+- 代码：`internal/domain/config.go` 的 `DefaultConfig()` 设置 `zh-CN`。已显式保存语言选择的配置不受影响（`store.loadConfig` 把 JSON 覆盖到默认值之上，存储值优先）；只有缺少 `app.language` 的旧配置才会继承新默认值。设置页仍可切到 English，切换后立即写回配置。
+- 测试：`internal/domain/config_language_test.go` 覆盖"默认中文 / 旧配置无该键继承中文 / 已存 `en` 时保留 `en` / 非法语言被拒"；新增 `cmd/desktop/language_test.go`，用全新临时数据目录断言 `d.language`、`tr()` 与设置页渲染结果都是中文。
+- 文档：`docs/DEVELOPMENT.md` 的默认语言改为 `zh-CN`，并说明已保存的选择不会被覆盖。
+
+验证（Windows 11 / Go 1.27.4）：
+
+- `go test -count=1 -timeout 300s ./internal/domain ./internal/store ./cmd/desktop` 通过；`go vet`、`gofmt -l cmd internal` 通过；`go build ./...` 与 Linux/macOS 交叉编译通过。
+- `go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64` 重新产出 `PrintBridge.exe` 与安装器。
+- 用不带 exe 资源的开发构建 + 全新 `PRINTBRIDGE_DATA_DIR` 真实启动：首次启动的配置引导为中文（"完成首次打印设置 / 1. 选择打印机 / 2. 设置纸张尺寸 / 完成设置 · 暂时跳过"），标题栏图标同时正常；核对后已销毁该测试实例并删除临时数据目录。
+
+待验证：新安装包在真实新用户环境下的首次启动语言（本次未做全新安装）。已有安装如果配置里已存 `"language": "en"`，升级后仍是英文，需在"设置 → 界面语言"切换一次。
+
 ### 应用图标缺失：托盘有图标，应用本身没有
 
 现象：托盘区有图标，但资源管理器里的 exe、任务栏按钮、窗口标题栏都是 Windows 默认空白图标。
