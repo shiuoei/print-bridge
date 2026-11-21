@@ -1,12 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"log"
 	"os"
 	"strconv"
@@ -726,21 +722,6 @@ func (d *desktop) settings(c *ui.Context) {
 	})
 }
 
-func icon() []byte {
-	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
-	ink := color.NRGBA{R: 34, G: 106, B: 190, A: 255}
-	for y := 6; y < 26; y++ {
-		for x := 6; x < 26; x++ {
-			if y < 11 || y > 20 || x < 10 || x > 21 {
-				img.Set(x, y, ink)
-			}
-		}
-	}
-	var b bytes.Buffer
-	_ = png.Encode(&b, img)
-	return b.Bytes()
-}
-
 func (d *desktop) refreshTrayMenu() {
 	if d.tray == nil {
 		return
@@ -866,8 +847,28 @@ func main() {
 			d.window.Show()
 		}
 	})
+	// Both icon sizes come from the one embedded asset: the tray takes the
+	// PNG's own dimensions as the icon size, while the window lets Windows
+	// scale. A failure leaves the executable's icon resource in charge.
+	windowPNG, windowIconErr := iconAt(windowIconSize)
+	if windowIconErr != nil {
+		log.Print(windowIconErr)
+	}
+	trayPNG, trayIconErr := iconAt(trayIconSize)
+	if trayIconErr != nil {
+		log.Print(trayIconErr)
+	}
 	mygo.App.WhenReady(func() {
 		d.window = mygo.NewWindow(mygo.WindowOptions{Title: "PrintBridge", Width: 880, Height: 680, Content: ui.View(d.view)})
+		// mygo gives the window the executable's icon resource, which `mygo
+		// build` writes from mygo.json's icon; setting it from the embedded
+		// asset as well keeps the title bar and taskbar icon right in builds
+		// that carry no such resource, such as `go run ./cmd/desktop`.
+		if windowPNG != nil {
+			if err := d.window.SetIcon(windowPNG); err != nil {
+				log.Print(err)
+			}
+		}
 		// Closing the window must hide it, not destroy it. mygo clears the native
 		// handle on close, so a destroyed window cannot be shown again from the
 		// tray: the process would keep running with no way back. Preventing the
@@ -880,10 +881,15 @@ func main() {
 			e.PreventDefault()
 			d.window.Hide()
 		})
-		tray, err := mygo.NewTray(mygo.TrayOptions{Icon: icon(), ToolTip: "PrintBridge"})
+		tray, err := mygo.NewTray(mygo.TrayOptions{Icon: trayPNG, ToolTip: "PrintBridge"})
 		if err == nil {
 			d.tray = tray
 			d.refreshTrayMenu()
+		} else {
+			// Without a tray icon the window still hides on close, so a
+			// failure here would leave the app running with no way back
+			// except Task Manager; say so in the log.
+			log.Print("tray: ", err)
 		}
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {

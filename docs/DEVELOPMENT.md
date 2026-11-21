@@ -15,6 +15,7 @@
 | 位置 | 职责 |
 | --- | --- |
 | `cmd/desktop` | MyGo 原生窗口、托盘、单实例、自启动开关；启动进程内 Agent 与本地 IPC |
+| `cmd/desktop/assets/icon.png` | 应用图标（1024×1024 方形 PNG）：exe 资源、安装器、窗口与托盘共用，由 `mygo.json` 的 `icon` 与 `go:embed` 引用 |
 | `cmd/server` | headless `serve`、信号退出、systemd notify |
 | `cmd/print-bridge` | CLI；在线命令走 IPC，离线仅在 Agent 确认不存在时执行；稳定退出码 |
 | `internal/domain` | 配置、任务与状态模型、统一 `ProtocolError`、打印机能力结构、白名单与任务字段校验 |
@@ -188,6 +189,8 @@ go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64
 ```
 
 产物在 `build/windows-amd64/`：`PrintBridge.exe`、`SumatraPDF.exe`、`print-bridge-setup-<version>-amd64.exe`。
+
+图标只有一个源文件：`cmd/desktop/assets/icon.png`，由 `mygo.json` 的 `icon` 指给构建工具。`mygo build` 把它写成 exe 的 `RT_ICON`/`RT_GROUP_ICON` 资源（16/24/32/48/64/128/256）与 NSIS 安装器的 `MUI_ICON`/`MUI_UNICON`；窗口与托盘在同一份 PNG 上运行时缩放（`cmd/desktop/appicon.go`），所以 `go run ./cmd/desktop` 这类没有 exe 资源的构建也有图标。换图标只需替换该 PNG（正方形、建议 1024×1024），重新构建即可。
 
 打包**默认不含** automation 插件（`-debug` 才带），因此不能用 UI 脚本驱动打包产物；验证请走 IPC。
 

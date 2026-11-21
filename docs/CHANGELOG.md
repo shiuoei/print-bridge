@@ -4,6 +4,29 @@
 
 ## 2026-11-21
 
+### 应用图标缺失：托盘有图标，应用本身没有
+
+现象：托盘区有图标，但资源管理器里的 exe、任务栏按钮、窗口标题栏都是 Windows 默认空白图标。
+
+根因：`mygo.json` 没有 `icon`，`resources/icon.png` 也不存在，`mygo build` 只写入 `RT_VERSION` 与 `RT_MANIFEST`，exe 内没有 `RT_ICON`/`RT_GROUP_ICON`（REA `inspect_pe_resources` 核对旧 `PrintBridge.exe`：资源目录只有类型 16 与 24，`icon_groups` 为空）。窗口类图标的来源是 `LoadIconW(instance, 1)`，资源不存在时该值为 0，标题栏与任务栏于是回落到系统默认图标。托盘之所以正常，是因为 `cmd/desktop/main.go` 里用代码画了一个 32×32 PNG 传给 `mygo.NewTray`。
+
+修复：
+
+- 新增 `cmd/desktop/assets/icon.png`：1024×1024 方形 PNG，圆角青绿底 + 白色打印机（配色取应用强调色 `#087F78`），用 `go:embed` 嵌入桌面程序。
+- `mygo.json` 增加 `"icon": "cmd/desktop/assets/icon.png"`。`mygo build` 由它写入 exe 的七档 `RT_ICON`（16/24/32/48/64/128/256）与 ID 1 的 `RT_GROUP_ICON`，并作为 NSIS 安装器的 `MUI_ICON`/`MUI_UNICON`。
+- 新增 `cmd/desktop/appicon.go`：`iconAt(size)` 按面积平均缩放内嵌图标（预乘 alpha，避免边缘发暗）。窗口用 256（Windows 再按标题栏/任务栏 DPI 缩放），托盘用 32（mygo 以 PNG 自身尺寸作为通知区图标尺寸）。窗口创建后调用 `Window.SetIcon`，因此不带 exe 资源的开发构建也有图标。
+- 托盘图标改用同一素材（原实现是代码画的蓝色方块），与窗口、exe、安装器一致；`mygo.NewTray` 失败现在会写日志，避免"没有托盘图标却仍然在关闭窗口时隐藏"的静默状态。
+
+验证（Windows 11 / Go 1.27.4）：
+
+- `go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64` 成功：`PrintBridge.exe`（19.0 MB）、`print-bridge-setup-0.1.0-amd64.exe`（14.1 MB）。
+- REA `inspect_pe_resources`：`PrintBridge.exe` 含 `RT_ICON`(3) 七项与 `RT_GROUP_ICON`(14) ID 1，16/24/32/48/64/128/256 各尺寸 `size_matches=true`；安装器同样含完整图标组。
+- `shell32.ExtractIconExW` 从 exe 与安装器提取第 0 个图标并渲染，均为新图形。
+- 用不带 exe 资源的开发构建真实启动（独立 `PRINTBRIDGE_DATA_DIR`）：窗口标题栏与任务栏按钮均显示新图标（截图核对）；托盘 PNG 经 `CreateIconFromResourceEx` 渲染正确，`Shell_NotifyIconGetRect` 查询托盘图标成功。
+- `go test -count=1 -timeout 300s ./cmd/desktop`、`go vet ./cmd/desktop`、`gofmt -l cmd internal`、`go build ./...` 通过；`GOOS=linux GOARCH=amd64` 与 `GOOS=darwin GOARCH=arm64` 交叉编译通过。
+
+待验证：用新安装包覆盖安装后，资源管理器、开始菜单与「应用和功能」中的图标显示。本次只核对 exe/安装器资源与未安装的开发构建，**未重新安装**。已安装的旧副本（例如 `E:\PrintBridge`）需重装或替换 exe 才会换图标。
+
 ### 仓库命名空间迁移到 GitHub
 
 模块路径与应用标识从 `gitee.com/wxioi` 改为 `github.com/shiuoei`，本地工作目录同步迁移。

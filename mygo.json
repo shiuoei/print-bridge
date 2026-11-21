@@ -4,6 +4,7 @@
   "identifier": "dev.shiuoei.print-bridge",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "icon": "cmd/desktop/assets/icon.png",
   "main": "./cmd/desktop",
   "out": "build",
   "webview": false
