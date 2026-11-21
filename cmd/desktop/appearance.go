@@ -118,6 +118,7 @@ func (d *desktop) aboutPage(c *ui.Context) {
 		}
 		summaryRow(c, d.tr("about_data_dir"), d.store.Dir())
 	})
+	d.updatePanel(c)
 	panel(c, d.tr("about_links"), d.tr("about_links_detail"), func() {
 		ui.Text(c, d.tr("about_license")).FontSize(12).TextColor(palette.muted)
 		ui.Text(c, d.tr("about_license_note")).FontSize(12).TextColor(palette.muted)
@@ -128,6 +129,35 @@ func (d *desktop) aboutPage(c *ui.Context) {
 		}
 		if d.diagCopied {
 			ui.Text(c, d.tr("diagnostics_copied")).FontSize(12).TextColor(palette.accent)
+		}
+	})
+}
+
+// updatePanel shows the signed auto-update state: whether background checks are
+// on, the last check, a newer version when one was found, and the manual check.
+// Builds that cannot update themselves still show why.
+func (d *desktop) updatePanel(c *ui.Context) {
+	panel(c, d.tr("updates"), d.tr("updates_detail"), func() {
+		if !d.updatesReady {
+			ui.Text(c, d.tr("updates_unavailable")).FontSize(12).TextColor(palette.muted)
+			return
+		}
+		automatic := d.updateAutomatic
+		if ui.Checkbox(c, &automatic, d.tr("update_automatic")).Changed() {
+			d.setUpdateAutomatic(automatic)
+		}
+		ui.Row(c).Gap(8).Children(func() {
+			if ui.Button(c, d.tr("update_check")).Clicked() {
+				d.checkForUpdates()
+			}
+		})
+		switch {
+		case d.updateAvailable != "":
+			ui.Text(c, fmt.Sprintf(d.tr("update_available"), d.updateAvailable)).FontSize(12).TextColor(palette.accent)
+		case !d.updateLastCheck.IsZero():
+			ui.Text(c, fmt.Sprintf(d.tr("update_last_check"), d.updateLastCheck.Local().Format("2006-01-02 15:04"))).FontSize(12).TextColor(palette.muted)
+		default:
+			ui.Text(c, d.tr("update_not_checked")).FontSize(12).TextColor(palette.muted)
 		}
 	})
 }

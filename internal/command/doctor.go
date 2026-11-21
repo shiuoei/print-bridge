@@ -46,7 +46,7 @@ type DoctorReport struct {
 // configuration.
 func (s Service) doctor(ctx context.Context, r *Response) error {
 	report := DoctorReport{
-		Version:   version(),
+		Version:   s.version(),
 		OS:        runtime.GOOS,
 		Arch:      runtime.GOARCH,
 		DataDir:   s.Store.Dir(),
@@ -227,6 +227,15 @@ func portInUse(port int) bool {
 	}
 	ln.Close()
 	return false
+}
+
+// version is what the doctor report names: the version the caller stamped, else
+// PRINTBRIDGE_VERSION, else a development build.
+func (s Service) version() string {
+	if s.Version != "" {
+		return s.Version
+	}
+	return version()
 }
 
 func version() string {

@@ -34,3 +34,10 @@ Thumbs.db
 # Local environment overrides. .env.example is meant to be committed.
 .env
 .env.local
+
+# Update signing keys: never commit the secret key. `mygo keygen` writes the
+# pair outside the repository by default; these patterns catch an accidental
+# -o pointing here. The public key itself lives in mygo.json.
+mygo-update.key
+mygo-update.pub
+/mygo/update-keys/

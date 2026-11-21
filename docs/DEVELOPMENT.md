@@ -29,6 +29,7 @@
 | `internal/printer` | 打印机列表与能力查询；Windows Spooler raw 与 SumatraPDF；Unix CUPS `lp` |
 | `internal/transfer` | Argon2id + AES-256-GCM 加密配置导入导出 |
 | `resources/windows-amd64` | 随 Windows 包发布的 SumatraPDF 3.6.1 |
+| `docs/RELEASES.md` | 自动更新窗口里的发布说明，每个 `## <version>` 小节对应一次发布 |
 | `packaging/linux` | headless systemd unit；deb/rpm 打包脚本尚未实现 |
 
 依赖方向：入口 → CommandService / Agent → domain、store、security、convert、printer。桌面 UI 不直接处理 WebSocket 消息；浏览器客户端不能通过 `/ws` 修改本机配置。`internal/printer`、`internal/store`、`internal/convert`、`internal/security` 不得反向导入 `internal/agent` 或 `internal/command`。
@@ -192,6 +193,41 @@ go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64
 
 图标只有一个源文件：`cmd/desktop/assets/icon.png`，由 `mygo.json` 的 `icon` 指给构建工具。`mygo build` 把它写成 exe 的 `RT_ICON`/`RT_GROUP_ICON` 资源（16/24/32/48/64/128/256）与 NSIS 安装器的 `MUI_ICON`/`MUI_UNICON`；窗口与托盘在同一份 PNG 上运行时缩放（`cmd/desktop/appicon.go`），所以 `go run ./cmd/desktop` 这类没有 exe 资源的构建也有图标。换图标只需替换该 PNG（正方形、建议 1024×1024），重新构建即可。
 
+### 发布与自动更新
+
+桌面版使用 MyGo 的签名自动更新：`mygo.json` 的 `updates` 声明更新源（本仓库为 GitHub Releases）与公钥；`mygo build` 用私钥生成签名归档、清单和增量，应用内由 `plugins/updater/native` 提供原生更新窗口（无 WebView），启动 10 秒后自动检查、之后每天一次，托盘与"关于"页可手动检查。更新窗口的语言取应用**启动时**的界面语言，切换语言后重启生效。更新包与清单必须签名，客户端用内置公钥验签后才安装。
+
+**更新签名密钥**（Ed25519，一次生成，长期复用）：
+
+```powershell
+go run github.com/egoist/mygo/cmd/mygo keygen   # 默认写到 %AppData%\mygo\update-keys
+```
+
+- 公钥填进 `mygo.json` 的 `updates.publicKey`（可提交）。
+- 私钥 `mygo-update.key` **必须放在仓库外**（密码管理器 + CI secret）。构建发布包时通过 `MYGO_UPDATER_PRIVATE_KEY` 传入。私钥丢失后，已安装版本将无法再自动更新，只能手动重装；私钥泄露等于任何人都能向用户下发代码。
+
+**发布一次新版本**：
+
+1. 提升 `mygo.json` 的 `version`（语义化版本，例如 `0.2.1`），并同步安装包内的版本资源。
+2. 在 `docs/RELEASES.md` 增加 `## <version>` 小节——它是更新窗口里的发布说明，缺这一节 `mygo build`（带私钥时）会直接报错；历史证据仍写 `docs/CHANGELOG.md`。
+3. 带私钥构建并上传：
+
+```powershell
+$env:MYGO_UPDATER_PRIVATE_KEY = (Get-Content "$env:APPDATA\mygo\update-keys\mygo-update.key" -Raw)
+go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64   # 本地校验产物
+go run github.com/egoist/mygo/cmd/mygo build -upload -platform windows/amd64
+```
+
+`-upload` 需要已配置 `updates.github`、本机 `gh` 已登录，且目标仓库存在；它把归档、清单、`install.ps1`、`SHA256SUMS` 与安装包上传为 `v<version>` 的**草稿 release**。确认产物后发布该 release（`gh release edit v0.2.1 --draft=false`），它成为 latest，客户端检查的就是它。没有 `-upload` 时产物在 `build/windows-amd64/`。
+
+**边界与限制**：
+
+- 自动更新要求安装目录对当前用户可写：默认 per-user 安装（`%LOCALAPPDATA%\Programs\PrintBridge`）可以；装到 `Program Files` 时 `mygo.Updater.Enabled()` 为 false，更新窗口会说明。便携式手动目录（如 `E:\PrintBridge`）只要用户可写也可用。
+- 0.1.0 没有更新能力：自动更新从 0.2.0 起步，`0.1.0 → 0.2.0` 必须手动安装一次。
+- exe 尚未做 Authenticode 代码签名，SmartScreen 仍会提示未知发布者；更新包的 Ed25519 签名只保证完整性与来源，不改变 SmartScreen 行为。
+- 更新会在用户确认后下载，重启才生效；正在打印时不要确认重启，避免打断队列任务。
+- "关于"页与 doctor 的版本号来自 `mygo.App.Version()`（由 `mygo build` 写入），CLI 仍用 `PRINTBRIDGE_VERSION` 环境变量。
+
 打包**默认不含** automation 插件（`-debug` 才带），因此不能用 UI 脚本驱动打包产物；验证请走 IPC。
 
 ### 测试注意事项
@@ -210,6 +246,8 @@ go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64
 | `PRINTBRIDGE_REAL_CHROMIUM` | 真实 Chromium HTML 安全测试 |
 | `PRINTBRIDGE_REAL_INLINE` | 真实打印机验证 inline base64 PDF |
 | `PRINTBRIDGE_MATRIX_*_URL` | 扩展格式矩阵测试的素材 URL |
+| `PRINTBRIDGE_VERSION` | 覆盖桌面/CLI 构建的版本号（`go build` 没有 `mygo build` 的版本戳时使用） |
+| `MYGO_UPDATER_PRIVATE_KEY` | 发布构建用的更新签名私钥内容；只在发布时设置，不写入仓库 |
 
 ### 跨平台
 

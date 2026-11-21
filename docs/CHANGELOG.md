@@ -4,6 +4,25 @@
 
 ## 2026-11-21
 
+### 检查更新与签名自动更新（版本 0.2.0）
+
+接入 MyGo 的签名自动更新，更新源为 GitHub Releases（`shiuoei/print-bridge`）。自动更新从 **0.2.0** 起步：0.1.0 没有检查逻辑，只能手动装一次 0.2.0。
+
+- 配置：`mygo.json` 提升到 `0.2.0`，新增 `updates`（`publicKey`、`github`、`changelog: docs/RELEASES.md`）。更新签名密钥用 `mygo keygen` 生成在仓库外（`%AppData%\mygo\update-keys`），私钥只在发布构建时经 `MYGO_UPDATER_PRIVATE_KEY` 注入；`.gitignore` 增加密钥兜底忽略。
+- 发布说明：新增 `docs/RELEASES.md`，每个 `## <version>` 小节就是更新窗口里的发布说明（缺失时带私钥构建会报错）。历史变更仍在 `docs/CHANGELOG.md`。
+- 桌面：`cmd/desktop/main.go` 注册 `plugins/updater/native`（原生更新窗口，无 WebView；窗口语言取启动时的界面语言，切换语言后重启生效）；托盘菜单增加"检查更新…"，"关于"页新增"更新"面板（当前状态、自动检查开关、手动检查、可用版本/上次检查时间）；更新状态镜像到 `desktop` 字段，测试在不注册插件时也能渲染页面。
+- 版本号：桌面与 doctor 改为读取真实版本。`appVersion()` 优先 `PRINTBRIDGE_VERSION`，否则 `mygo.App.Version()`（`mygo build` 写入 `mygo.json` 的 version），开发构建回退 `dev`；`command.Service` 新增 `Version` 字段，doctor 报告因此不再是 `dev`。
+- 语言包：新增 9 个更新相关文案（中/英）。
+
+验证（Windows 11 / Go 1.27.4）：
+
+- 带私钥 `mygo build -platform windows/amd64` 成功：`PrintBridge.exe`（24.0 MB）、`print-bridge-setup-0.2.0-amd64.exe`（15.1 MB）、`print-bridge-0.2.0-windows-amd64.tar.gz`（19.6 MB）、`update-windows-amd64.json`、`install.ps1`、`SHA256SUMS`。清单含 `version: 0.2.0`、来自 `docs/RELEASES.md` 的说明、指向 `github.com/shiuoei/print-bridge/releases/download/v0.2.0/...` 的 URL 与 Ed25519 签名；"no version is published yet"属预期（首版无增量）。
+- 安装包内打包了一份全新 `PRINTBRIDGE_DATA_DIR` 启动**打包构建**：界面为简体中文（默认语言生效）、应用图标正常、"关于"页显示版本 `0.2.0`。经 IPC 执行 `print-bridge doctor` 输出 `PrintBridge 0.2.0 (windows/amd64)`，确认 `App.Version()` 与 `Service.Version` 注入生效。
+- 在"关于"页点击"检查更新…"打开**原生中文更新窗口**（标题"软件更新"，带应用图标），说明插件已注册且 `mygo.Updater.Enabled()` 为 true；检查失败并明确显示 `GET https://github.com/shiuoei/print-bridge/releases/latest/download/update-windows-amd64.json: 404 Not Found`——符合"仓库/首版尚未发布"的预期。
+- `go test -count=1 -timeout 400s ./cmd/desktop ./internal/command ./internal/domain ./internal/store`、`go vet ./...`、`gofmt`、`go build ./...`、Linux/macOS 交叉编译通过。
+
+待验证：创建 GitHub 仓库并发布 `v0.2.0` release（`mygo build -upload` + 发布草稿）后，0.2.0 客户端实机完成一次 `0.2.0 → 0.2.1` 自动更新（含增量下载与重启生效）。本次只完成到"签名产物 + 客户端检查链路"，未上传、未做真实升级。
+
 ### 默认界面语言改为简体中文
 
 `app.language` 的默认值由 `en` 改为 `zh-CN`：全新安装，或数据目录里还没有 `config.json` 时，桌面从配置引导开始就是中文界面。

@@ -38,6 +38,8 @@ go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64
 
 产物在 `build/windows-amd64/`。
 
+发布版支持签名自动更新：启动后自动检查 GitHub Releases，也可从托盘菜单或"关于"页手动检查；更新包经内置公钥验签、支持增量下载，确认后重启生效。发布新版本需要更新签名私钥（`mygo keygen` 生成，**不入库**），完整步骤见[开发说明的"发布与自动更新"](docs/DEVELOPMENT.md#发布与自动更新)。
+
 ## 业务系统对接
 
 ```js

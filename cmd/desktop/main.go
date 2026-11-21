@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
+	"github.com/egoist/mygo/plugins/updater/native"
 	"github.com/egoist/mygo/ui"
 	"github.com/shiuoei/print-bridge/internal/agent"
 	"github.com/shiuoei/print-bridge/internal/command"
@@ -101,6 +103,14 @@ type desktop struct {
 	// quitting is set when the user chose Quit, so the close handler lets the
 	// window actually close instead of hiding it.
 	quitting bool
+
+	// Signed auto-update state, mirrored from the updater plugin so the page
+	// renders without the plugin: the main package registers the plugin, then
+	// keeps these fields current (see refreshUpdateState).
+	updatesReady    bool
+	updateAutomatic bool
+	updateAvailable string
+	updateLastCheck time.Time
 }
 
 func (d *desktop) load() {
@@ -734,6 +744,7 @@ func (d *desktop) refreshTrayMenu() {
 			d.showWindow()
 		}},
 		{Label: d.tr("tray_restart"), Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Relaunch() }},
+		{Label: d.tr("tray_check_updates"), Click: func(*mygo.MenuItem, *mygo.Window) { d.checkForUpdates() }},
 		{Label: d.tr("tray_autostart"), Type: mygo.MenuItemCheckbox, Checked: mygo.App.OpenAtLogin(), Click: func(it *mygo.MenuItem, _ *mygo.Window) {
 			if err := mygo.App.SetOpenAtLogin(it.Checked); err != nil {
 				log.Print(err)
@@ -778,6 +789,50 @@ func (d *desktop) trayTestPrint() {
 	d.message, d.errorDetail = d.tr("test_print_submitted"), ""
 }
 
+// appVersion is the version this build runs: `mygo build` stamps it from
+// mygo.json into mygo.App.Version(), and PRINTBRIDGE_VERSION overrides it for
+// plain Go builds and tests, which carry no such stamp.
+func appVersion() string {
+	if v := os.Getenv("PRINTBRIDGE_VERSION"); v != "" {
+		return v
+	}
+	if v := mygo.App.Version(); v != "" {
+		return v
+	}
+	return "dev"
+}
+
+// refreshUpdateState mirrors the updater plugin's state into the fields the
+// About page draws. The plugin calls it on the main thread whenever a check or
+// the user's answer changes that state.
+func (d *desktop) refreshUpdateState() {
+	if !d.updatesReady {
+		return
+	}
+	d.updateAutomatic = updater.AutomaticChecks()
+	d.updateAvailable = updater.AvailableVersion()
+	d.updateLastCheck = updater.LastCheck()
+}
+
+// checkForUpdates opens the update window, or does nothing in builds where the
+// plugin is not registered (the UI tests).
+func (d *desktop) checkForUpdates() {
+	if !d.updatesReady {
+		return
+	}
+	updater.CheckForUpdates()
+}
+
+// setUpdateAutomatic stores whether the app checks for updates in the
+// background.
+func (d *desktop) setUpdateAutomatic(on bool) {
+	if !d.updatesReady {
+		return
+	}
+	updater.SetAutomaticChecks(on)
+	d.updateAutomatic = on
+}
+
 // setAutostart persists the autostart choice so the settings page and the OS agree.
 func (d *desktop) setAutostart(enabled bool) {
 	c := d.store.Config()
@@ -809,6 +864,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// The version feeds the About page and the doctor report; it also has to be
+	// the real one for the updater, whose checks compare versions.
+	version := appVersion()
 	p := printer.New()
 	a := agent.New(s, p)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -824,17 +882,12 @@ func main() {
 	}
 	ln, err := ipc.Listen(dir)
 	if err == nil {
-		go ipc.Serve(ctx, ln, command.Service{Store: s, Printer: p, Agent: liveAgent, Logs: logBuffer})
+		go ipc.Serve(ctx, ln, command.Service{Store: s, Printer: p, Agent: liveAgent, Logs: logBuffer, Version: version})
 	} else {
 		log.Print(err)
 	}
-	d := &desktop{store: s, agent: desktopAgent, service: command.Service{Store: s, Printer: p, Agent: liveAgent, Logs: logBuffer}}
-	// The version is stamped at build time; a dev build says so rather than
-	// claiming a release number it does not have.
-	d.version = "dev"
-	if v := os.Getenv("PRINTBRIDGE_VERSION"); v != "" {
-		d.version = v
-	}
+	d := &desktop{store: s, agent: desktopAgent, service: command.Service{Store: s, Printer: p, Agent: liveAgent, Logs: logBuffer, Version: version}}
+	d.version = version
 	if startErr != nil {
 		d.agentError = startErr.Error()
 		d.agentErrorCode = domain.CodeOf(startErr)
@@ -858,6 +911,15 @@ func main() {
 	if trayIconErr != nil {
 		log.Print(trayIconErr)
 	}
+	// Signed auto-updates: mygo.json carries the feed (GitHub releases) and the
+	// public key that update archives must be signed with; `mygo build` refuses
+	// to publish without the matching private key. The update window is native
+	// UI so no webview is needed, and it speaks the language the app started
+	// with (a language change in Settings applies to it after a restart).
+	mygo.Use(native.New(updater.Options{Icon: windowPNG, Language: d.language}))
+	d.updatesReady = true
+	d.refreshUpdateState()
+	updater.OnChange(d.refreshUpdateState)
 	mygo.App.WhenReady(func() {
 		d.window = mygo.NewWindow(mygo.WindowOptions{Title: "PrintBridge", Width: 880, Height: 680, Content: ui.View(d.view)})
 		// mygo gives the window the executable's icon resource, which `mygo

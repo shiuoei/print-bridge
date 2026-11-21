@@ -105,6 +105,10 @@ type Service struct {
 	Agent        AgentState
 	Logs         *logging.Buffer
 	RemoteClient *http.Client
+	// Version is the version the doctor report names. Empty falls back to the
+	// PRINTBRIDGE_VERSION environment variable, which is how the CLI stamps a
+	// build that mygo build did not package.
+	Version string
 }
 
 func (s Service) Execute(ctx context.Context, req Request) Response {

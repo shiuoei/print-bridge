@@ -2,9 +2,14 @@
   "name": "PrintBridge",
   "slug": "print-bridge",
   "identifier": "dev.shiuoei.print-bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "icon": "cmd/desktop/assets/icon.png",
+  "updates": {
+    "publicKey": "PVxoaJLwNz+PYvCF4tZjipkklb0yclcteiAfR5hk0oM=",
+    "github": "shiuoei/print-bridge",
+    "changelog": "docs/RELEASES.md"
+  },
   "main": "./cmd/desktop",
   "out": "build",
   "webview": false
